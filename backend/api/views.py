@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponseBase, JsonResponse, StreamingHttpResponse
 from django.views.decorators.http import require_POST
 from rest_framework.request import Request
@@ -44,7 +45,11 @@ async def chat_view(request: HttpRequest) -> HttpResponseBase:
     with the ``final`` shape is returned.
     """
     try:
-        body = json.loads(request.body or b"{}")
+        raw = request.body
+    except RequestDataTooBig:
+        return _error(400, "invalid_request", "La solicitud excede el tamaño permitido.")
+    try:
+        body = json.loads(raw or b"{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return _error(400, "invalid_json", "El cuerpo de la solicitud debe ser JSON válido.")
     serializer = ChatRequestSerializer(data=body if isinstance(body, dict) else {})
