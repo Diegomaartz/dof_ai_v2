@@ -15,6 +15,7 @@ import json
 import sys
 import time
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 from rag.chunker import ChunkerConfig, LegalChunker
@@ -25,12 +26,14 @@ from rag.service import DocumentSource, build_chunks
 
 def _source(args: argparse.Namespace) -> DocumentSource:
     path = Path(args.file)
+    pub = getattr(args, "publication_date", None)
     return DocumentSource(
         filename=path.name,
         data=path.read_bytes(),
         source_key=str(path),
         source_url=getattr(args, "source_url", None),
         law_name=getattr(args, "law_name", None),
+        publication_date=date.fromisoformat(pub) if pub else None,
     )
 
 
@@ -43,6 +46,8 @@ def cmd_chunk(args: argparse.Namespace) -> int:
     print(f"{len(chunks)} chunks ({dict(kinds)}) in {time.perf_counter() - started:.2f}s")
     print(f"split articles: {sorted({c.article_label for c in chunks if c.part_count > 1})}")
     print(f"repealed: {sum(c.is_repealed for c in chunks)}")
+    if missing := law.missing_citation_fields():
+        print(f"WARNING: ingest will refuse this document until {missing} is supplied")
     for c in chunks[: args.show]:
         print(f"\n--- {c.id}  {c.citation}\n    {c.hierarchy_path}\n{c.text[:400]}")
     if args.jsonl:
@@ -89,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("chunk", help="Parse a law and print its structural chunks (no network).")
     p.add_argument("file")
     p.add_argument("--law-name")
+    p.add_argument("--source-url")
+    p.add_argument("--publication-date", help="Original DOF publication date, YYYY-MM-DD.")
     p.add_argument("--show", type=int, default=3, help="Number of chunks to print.")
     p.add_argument("--max-chars", type=int, default=8000)
     p.add_argument("--jsonl", help="Write all chunks (metadata form) to this file.")
@@ -102,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("ingest", help="Embed with Bedrock and upsert into Pinecone.")
     p.add_argument("file")
     p.add_argument("--law-name")
-    p.add_argument("--source-url")
+    p.add_argument("--source-url", required=True, help="Official URL of the law (cited in answers).")
+    p.add_argument("--publication-date", help="Original DOF publication date, YYYY-MM-DD.")
     p.set_defaults(func=cmd_ingest)
 
     args = parser.parse_args(argv)

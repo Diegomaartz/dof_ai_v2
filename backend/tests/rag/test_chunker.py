@@ -13,7 +13,7 @@ from rag.chunker import (
     slugify,
 )
 from rag.models import LawMetadata, LegalChunk, SectionType
-from rag.service import DocumentSource, build_chunks
+from rag.service import DocumentSource, IncompleteLawMetadataError, build_chunks
 
 
 def chunk(text: str, law: LawMetadata, **cfg: int) -> list[LegalChunk]:
@@ -196,6 +196,79 @@ def test_compound_ordinal_transitorios(law: LawMetadata) -> None:
     assert [c.article_label for c in trans] == ["Primero", "Décimo Primero"]
     assert trans[0].decree_date == date(2000, 1, 1)
     assert trans[1].id == "lp#tr000-decimo-primero"
+
+
+REFORM_APPENDIX_LAW = """\
+Artículo 1.- Disposición única.
+TRANSITORIOS
+PRIMERO.- La presente Ley entrará en vigor al día siguiente.
+ARTÍCULOS TRANSITORIOS DE DECRETOS DE REFORMA
+DECRETO por el que se reforma el artículo 1 de la Ley de Prueba.
+Publicado en el Diario Oficial de la Federación el 10 de marzo de 2010
+ARTÍCULO ÚNICO.- Se reforma el artículo 1.
+TRANSITORIO
+ÚNICO.- El presente Decreto entrará en vigor en 2010.
+México, D.F., a 1 de febrero de 2010.- Rúbricas.
+DECRETO Número 45 que reforma la Ley de Prueba.
+ARTÍCULO ÚNICO.- Se reforma el artículo 1.
+TRANSITORIO
+ÚNICO.- El presente Decreto entrará en vigor sin fecha conocida.
+México, D.F., a 1 de enero de 2011.- Rúbricas.
+TRANSITORIOS
+PRIMERO.- Bloque sin encabezado de decreto.
+"""
+
+
+def transitorios(text: str, law: LawMetadata) -> list[LegalChunk]:
+    return [c for c in chunk(text, law) if c.section_type is SectionType.TRANSITORIO]
+
+
+def test_original_and_dated_reform_transitorios(law: LawMetadata) -> None:
+    original, reform_2010, *_ = transitorios(REFORM_APPENDIX_LAW, law)
+    assert original.citation == "[LEY DE PRUEBA, Transitorio Primero, DOF 01/01/2000]"
+    assert reform_2010.decree_title == "DECRETO por el que se reforma el artículo 1 de la Ley de Prueba."
+    assert reform_2010.citation == "[LEY DE PRUEBA, Transitorio Único, DOF 10/03/2010]"
+
+
+def test_decree_without_publication_line_never_borrows_a_date(law: LawMetadata) -> None:
+    undated = transitorios(REFORM_APPENDIX_LAW, law)[2]
+    assert undated.transitorio_block == 2
+    # "DECRETO Número ..." is recognised as a new decree, and its body does not leak into the title.
+    assert undated.decree_title == "DECRETO Número 45 que reforma la Ley de Prueba."
+    assert undated.decree_date is None
+    assert undated.citation_date is None  # not the law's 2000 publication nor the 2010 decree
+    assert undated.citation == "[LEY DE PRUEBA, Transitorio Único]"
+
+
+def test_transitorios_block_without_decree_heading_does_not_inherit_previous_decree(law: LawMetadata) -> None:
+    orphan = transitorios(REFORM_APPENDIX_LAW, law)[3]
+    assert orphan.transitorio_block == 3 and orphan.article_label == "Primero"
+    assert orphan.decree_title is None and orphan.decree_date is None
+    assert "decree_title" not in orphan.to_metadata()
+
+
+def test_lowercase_decreto_in_transitorio_body_is_not_a_decree_heading(law: LawMetadata) -> None:
+    text = (
+        "Artículo 1.- Uno.\nTRANSITORIOS\nPRIMERO.- Se abroga el\n"
+        "Decreto de 1990 y sus reformas.\nSEGUNDO.- Vigencia.\n"
+    )
+    first, second = transitorios(text, law)
+    assert first.text.endswith("Decreto de 1990 y sus reformas.")
+    assert second.decree_date == date(2000, 1, 1)
+
+
+def test_build_chunks_requires_a_readable_law_name() -> None:
+    data = "Artículo 1.- Uno.".encode()
+    with pytest.raises(IncompleteLawMetadataError, match="law-name"):
+        build_chunks(DocumentSource(filename="LFT.txt", data=data))
+    [only] = build_chunks(DocumentSource(filename="LFT.txt", data=data, law_name="LEY FEDERAL DEL TRABAJO"))
+    assert only.citation == "[LEY FEDERAL DEL TRABAJO, Art. 1]"
+
+
+def test_missing_citation_fields(law: LawMetadata) -> None:
+    assert law.missing_citation_fields() == ["source_url"]
+    full = law.model_copy(update={"source_url": "https://www.dof.gob.mx/x"})
+    assert full.missing_citation_fields() == []
 
 
 def test_repealed_in_parentheses(law: LawMetadata) -> None:

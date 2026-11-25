@@ -80,6 +80,10 @@ TRANSITORIO_ART_RE = re.compile(rf"^(?:ARTICULO\s+)?(?P<ord>{ORDINAL})\s*{_SEP}(
 TRANSITORIOS_RE = re.compile(r"^(?:ARTICULOS?\s+)?TRANSITORIOS?\s*\.?$")
 APPENDIX_RE = re.compile(r"^(?:ARTICULOS\s+)?TRANSITORIOS\s+DE\s+(?:LOS\s+)?DECRETOS?\s+DE\s+REFORMAS?")
 DECREE_RE = re.compile(r"^DECRETO\s+(?:POR|MEDIANTE|QUE|EN)\b")
+# Reform-decree headings in the appendix always start with an upper-case "DECRETO"
+# ("DECRETO Número 123 ...", "DECRETO de ..."); matched on the unfolded line so wrapped
+# body text such as "Decreto de ..." is not mistaken for a new decree.
+DECREE_HEADING_RE = re.compile(r"^DECRETO\b")
 PUBLISHED_RE = re.compile(r"^PUBLICAD[OA]\s+EN\s+EL\s+DIARIO\s+OFICIAL\s+DE\s+LA\s+FEDERACION\s+EL\s+(?P<date>.+)$")
 SIGNATURE_RE = re.compile(
     r"^(?:(?:MEXICO|CIUDAD DE MEXICO)(?:,?\s*D\.\s*F\.)?,?\s+A\s+(?:\d{1,2}|LOS?\b)"
@@ -251,6 +255,10 @@ class LegalChunker:
         decree_title: str | None = None
         decree_date: date | None = None
         decree_title_open = False
+        # Whether a decree heading / "Publicado en el DOF" line was seen since the last
+        # TRANSITORIOS block, so a block never inherits the previous decree's title or date.
+        decree_heading_seen = False
+        decree_published_seen = False
 
         def close() -> None:
             nonlocal current
@@ -311,21 +319,31 @@ class LegalChunker:
                 decree_title_open = False
                 if block == 0 and decree_title is None:
                     decree_date = law.publication_date
+                elif not decree_heading_seen:
+                    decree_title = None
+                    if not decree_published_seen:
+                        decree_date = None
+                decree_heading_seen = decree_published_seen = False
                 continue
-            if upper and DECREE_RE.match(f):
+            if upper and (DECREE_RE.match(f) or DECREE_HEADING_RE.match(line)):
                 close()
                 state = _State.SKIP
                 decree_title, decree_date, decree_title_open = line, None, True
+                decree_heading_seen, decree_published_seen = True, False
                 continue
             if m := PUBLISHED_RE.match(f):
                 decree_date = parse_text_date(m["date"]) or decree_date
                 decree_title_open = False
+                decree_published_seen = True
                 continue
             if upper and SIGNATURE_RE.match(f):
                 close()
                 state = _State.SKIP
                 continue
             if decree_title_open and state is _State.SKIP:
+                if self._transitorio_label(line, f):  # decree body ("ARTÍCULO ÚNICO.- ...") ends the title
+                    decree_title_open = False
+                    continue
                 if decree_title is not None and len(decree_title) < 600:
                     decree_title = f"{decree_title} {line}"
                 continue

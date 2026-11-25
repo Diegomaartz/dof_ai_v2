@@ -26,6 +26,11 @@ class LawMetadata(BaseModel):
     source_url: str | None = None
     source_key: str | None = None
 
+    def missing_citation_fields(self) -> list[str]:
+        """Names of the law-level fields required for citations (CLAUDE.md) that are still empty."""
+        required = {"publication_date": self.publication_date, "source_url": self.source_url}
+        return [name for name, value in required.items() if not value]
+
 
 class LegalChunk(BaseModel):
     """One structurally intact legal unit (an article or a transitional article).
@@ -56,8 +61,14 @@ class LegalChunk(BaseModel):
 
     @property
     def citation_date(self) -> date | None:
-        """Date used in citations: decree date for transitorios, else latest reform, else publication."""
-        if self.section_type is SectionType.TRANSITORIO and self.decree_date:
+        """Date used in citations.
+
+        Transitorios cite the DOF publication of the decree that contains them. When that
+        date is unknown it is omitted rather than borrowed from the law, which would
+        attribute a reform decree to the original publication. Body articles cite their
+        latest reform, else the law's publication date.
+        """
+        if self.section_type is SectionType.TRANSITORIO:
             return self.decree_date
         if self.reform_dates:
             return max(self.reform_dates)

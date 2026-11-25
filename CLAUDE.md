@@ -104,4 +104,4 @@ python -m rag.cli ingest path/to/LFT.pdf --source-url <url>  # real Bedrock + Pi
 
 - Lambda entry point: `rag.handler.lambda_handler` (package `backend/rag` + `backend/requirements-ingestion.txt`).
 - Vector IDs are `<law_slug>#art-<label>` / `<law_slug>#tr<block>-<label>`; the slug defaults to the file stem (`LFT.pdf` → `lft`) or the `x-amz-meta-law-id` S3 metadata. Re-uploading a law replaces its vectors and prunes stale IDs.
-- Optional S3 object metadata: `law-id`, `law-name`, `source-url`, `publication-date` (`YYYY-MM-DD`).
+- S3 object metadata: `source-url` is **required**; `law-name` and `publication-date` (`YYYY-MM-DD`) are required when the law header cannot be parsed; `law-id` is optional. Ingestion refuses (`IncompleteLawMetadataError`, before any Bedrock/Pinecone call) rather than index chunks that cannot be cited.

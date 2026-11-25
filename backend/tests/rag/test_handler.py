@@ -7,9 +7,11 @@ from typing import Any
 import pytest
 
 from rag.handler import lambda_handler
-from rag.service import DocumentSource, IngestionService, NoArticlesFoundError
+from rag.service import DocumentSource, IncompleteLawMetadataError, IngestionService, NoArticlesFoundError
 from rag.vector_store import PineconeVectorStore
 from tests.rag.conftest import FakeEmbedder, FakeIndex
+
+LFT_META = {"source-url": "https://www.diputados.gob.mx/LeyesBiblio/pdf/LFT.pdf"}
 
 
 class FakeS3:
@@ -72,7 +74,7 @@ def test_handler_ingests_url_encoded_key_with_metadata_overrides(
 def test_handler_reingest_is_idempotent(
     service: IngestionService, fake_index: FakeIndex, lft_excerpt_bytes: bytes
 ) -> None:
-    s3 = FakeS3({"LFT.txt": (lft_excerpt_bytes, {})})
+    s3 = FakeS3({"LFT.txt": (lft_excerpt_bytes, LFT_META)})
     lambda_handler(s3_event("LFT.txt"), None, service=service, s3=s3)
     first = fake_index.ids("leyes")
     summary = lambda_handler(s3_event("LFT.txt"), None, service=service, s3=s3)
@@ -92,17 +94,56 @@ def test_handler_skips_unsupported_and_non_create_events(service: IngestionServi
 def test_handler_raises_after_processing_all_records(
     service: IngestionService, fake_index: FakeIndex, lft_excerpt_bytes: bytes
 ) -> None:
-    s3 = FakeS3({"vacio.txt": (b"Documento sin articulos.", {}), "LFT.txt": (lft_excerpt_bytes, {})})
+    s3 = FakeS3({"vacio.txt": (b"Documento sin articulos.", {}), "LFT.txt": (lft_excerpt_bytes, LFT_META)})
     with pytest.raises(RuntimeError, match=r"vacio.txt"):
         lambda_handler(s3_event("vacio.txt", "LFT.txt"), None, service=service, s3=s3)
     assert any(i.startswith("lft#") for i in fake_index.ids("leyes")), "valid record still ingested"
 
 
+def lp_source(data: bytes, **overrides: Any) -> DocumentSource:
+    fields: dict[str, Any] = {
+        "law_name": "LEY DE PRUEBA",
+        "source_url": "https://www.dof.gob.mx/lp",
+        "publication_date": date(2000, 1, 1),
+    }
+    return DocumentSource(filename="LP.txt", data=data, **(fields | overrides))
+
+
 def test_empty_document_never_wipes_existing_vectors(service: IngestionService, fake_index: FakeIndex) -> None:
-    service.ingest(DocumentSource(filename="LP.txt", data="Artículo 1.- Uno.".encode()))
+    service.ingest(lp_source("Artículo 1.- Uno.".encode()))
     with pytest.raises(NoArticlesFoundError):
-        service.ingest(DocumentSource(filename="LP.txt", data=b"   "))
+        service.ingest(lp_source(b"   "))
     assert fake_index.ids("leyes") == {"lp#art-1"}
+
+
+@pytest.mark.parametrize(
+    ("override", "missing"),
+    [({"source_url": None}, "source_url"), ({"publication_date": None}, "publication_date")],
+)
+def test_ingest_refuses_missing_citation_metadata_before_any_call(
+    service: IngestionService,
+    fake_index: FakeIndex,
+    fake_embedder: FakeEmbedder,
+    override: dict[str, Any],
+    missing: str,
+) -> None:
+    with pytest.raises(IncompleteLawMetadataError, match=missing):
+        service.ingest(lp_source("Artículo 1.- Uno.".encode(), **override))
+    assert fake_embedder.texts == [] and fake_index.upsert_calls == []
+
+
+def test_ingest_refuses_unreadable_law_name_instead_of_using_file_stem(service: IngestionService) -> None:
+    with pytest.raises(IncompleteLawMetadataError, match="law name"):
+        service.ingest(lp_source("Artículo 1.- Uno.".encode(), law_name=None))
+
+
+def test_handler_reports_upload_without_source_url(
+    service: IngestionService, fake_index: FakeIndex, lft_excerpt_bytes: bytes
+) -> None:
+    s3 = FakeS3({"LFT.txt": (lft_excerpt_bytes, {})})
+    with pytest.raises(RuntimeError, match=r"IncompleteLawMetadataError.*source_url"):
+        lambda_handler(s3_event("LFT.txt"), None, service=service, s3=s3)
+    assert fake_index.ids("leyes") == set()
 
 
 def test_document_source_from_s3_metadata() -> None:

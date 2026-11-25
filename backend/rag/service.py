@@ -22,6 +22,14 @@ class NoArticlesFoundError(ValueError):
     """The document produced no chunks; existing vectors are left untouched."""
 
 
+class IncompleteLawMetadataError(ValueError):
+    """Metadata required to cite the law is missing; nothing is embedded or indexed.
+
+    Citations must read ``[Ley X, Art. Y, DOF DD/MM/YYYY]`` with a verifiable source,
+    so the law name, publication date and source URL are never guessed.
+    """
+
+
 @dataclass(frozen=True)
 class DocumentSource:
     """A document to ingest plus optional uploader-supplied overrides.
@@ -67,10 +75,21 @@ class IngestionService:
         return build_chunks(source, self.chunker)
 
     def ingest(self, source: DocumentSource) -> IngestionResult:
-        """Index *source*, replacing any previous version of the same law."""
+        """Index *source*, replacing any previous version of the same law.
+
+        Raises:
+            IncompleteLawMetadataError: if the law name, publication date or source URL is
+                missing (checked before any Bedrock or Pinecone call).
+            NoArticlesFoundError: if no articles are detected.
+        """
         started = time.perf_counter()
         chunks = self.build_chunks(source)
         law = chunks[0].law
+        if missing := law.missing_citation_fields():
+            raise IncompleteLawMetadataError(
+                f"{source.filename!r} lacks required citation metadata {missing}; supply it via S3 metadata "
+                "('source-url', 'publication-date' as YYYY-MM-DD) or the CLI flags."
+            )
         vectors = self.embedder.embed_many([c.embedding_text() for c in chunks])
         deleted = self.store.replace_document(law.law_slug, chunks, vectors)
         result = IngestionResult(
@@ -89,10 +108,21 @@ class IngestionService:
 
 
 def build_chunks(source: DocumentSource, chunker: LegalChunker | None = None) -> list[LegalChunk]:
-    """Pure function behind :meth:`IngestionService.build_chunks` (used by the CLI dry run)."""
+    """Pure function behind :meth:`IngestionService.build_chunks` (used by the CLI dry run).
+
+    Raises:
+        IncompleteLawMetadataError: if no law name is supplied and none can be parsed from
+            the header (a file stem such as ``LFT`` is not a citable law name).
+        NoArticlesFoundError: if no articles are detected.
+    """
     doc = load_document(source.data, source.filename)
     parsed_name, parsed_pub, last_reform = parse_law_header(doc.first_page)
-    law_name = source.law_name or parsed_name or PurePosixPath(source.filename).stem
+    law_name = source.law_name or parsed_name
+    if not law_name:
+        raise IncompleteLawMetadataError(
+            f"Could not read the law name from the header of {source.filename!r}; "
+            "supply it via S3 metadata 'law-name' or --law-name."
+        )
     law = LawMetadata(
         law_name=law_name,
         # File stems from diputados.gob.mx ("LFT", "LAmp", "CPEUM") are short, unique law codes.
