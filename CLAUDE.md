@@ -1,6 +1,6 @@
 # CLAUDE.md — DOF-AI v2
 
-Persistent context and architectural rules for this repository. Read this before making changes.
+Persistent context and architectural rules for this repository. Read this before making changes. The phased roadmap and acceptance criteria live in [README.md](README.md).
 
 ## Project
 
@@ -12,10 +12,10 @@ v1 was a linear LangChain pipeline. v2 is a **stateful, self-correcting LangGrap
 
 ### Legal grounding
 - Answers must be built **only** from retrieved content (Pinecone chunks or MCP DOF tool results). Never answer legal questions from model prior knowledge.
-- Every claim must cite its source precisely: **law name, article number, and publication date** (DOF date for publications/reforms).
-- If retrieval returns nothing relevant, the agent must say so explicitly instead of guessing.
-- The graph must include a verification/self-correction step (e.g. grade retrieved docs, check the draft answer against sources, re-retrieve or rewrite the query when grounding fails).
-- Chunking of legal texts is **structural** (by Libro / Título / Capítulo / Artículo, keeping fractions and transitory articles intact), never naive fixed-size splitting. Chunk metadata must carry the law, article number, hierarchy path and publication/reform date so citations can be produced.
+- Every claim must cite its source inline using the format **`[Ley X, Art. Y, DOF DD/MM/YYYY]`** (law name, article number, publication/reform date).
+- If retrieval returns nothing relevant, the agent must refuse explicitly with: **"No se encontró sustento legal en las fuentes consultadas"** — never guess.
+- The graph must include a Self-RAG verification step: grade retrieved docs for relevance and rewrite the query when context is insufficient (**max 2 retries**), then refuse if grounding still fails.
+- Chunking of legal texts is **structural** (by Libro / Título / Capítulo / Artículo, keeping fractions and TRANSITORIOS intact), never naive fixed-size splitting. Chunk metadata must carry at least `law_name`, `article_number`, hierarchy path, `publication_date` and `source_url` so citations can be produced.
 
 ### Cost (AWS Free Tier / pay-per-use)
 - **Do NOT provision:** NAT Gateways, OpenSearch Serverless, always-on EC2 instances, or any other resource with a fixed hourly cost.
@@ -26,7 +26,8 @@ v1 was a linear LangChain pipeline. v2 is a **stateful, self-correcting LangGrap
 ### Infrastructure
 - All AWS resources are defined in Terraform under `infra/`. No manual console changes.
 - IAM follows least privilege; one role per workload (ingestion Lambda, MCP Lambda, ECS task).
-- Secrets (Pinecone API key, Django secret key, etc.) never go in code, Terraform state outputs, or the repo. Use environment variables locally and AWS Secrets Manager / SSM Parameter Store in the cloud.
+- Never hardcode AWS credentials or API keys. Workloads use IAM roles; local development uses environment variables documented in `.env.example`.
+- Secrets (Pinecone API key, Django secret key, etc.) never go in code, Terraform state outputs, or the repo. Use AWS Secrets Manager / SSM Parameter Store in the cloud.
 
 ## Tech stack
 
@@ -34,7 +35,7 @@ v1 was a linear LangChain pipeline. v2 is a **stateful, self-correcting LangGrap
 |---|---|
 | Language | Python 3.11+ |
 | Agent | LangGraph + `langchain-aws` (`ChatBedrockConverse`) — Claude (Sonnet/Haiku) or Amazon Nova on Bedrock |
-| Tools | Model Context Protocol via official Python `mcp` SDK (`FastMCP`) for real-time dof.gob.mx scraping/queries |
+| Tools | Model Context Protocol via official Python `mcp` SDK (`FastMCP`), stateless HTTP transport, for real-time dof.gob.mx scraping/queries |
 | RAG | Pinecone Serverless + Bedrock embeddings `amazon.titan-embed-text-v2:0` |
 | Backend | Django 5 + Django REST Framework, streaming responses via SSE |
 | Frontend | React + Vite + TypeScript + Tailwind CSS |
@@ -62,14 +63,45 @@ dof-ai-v2/
 ### Boundaries
 - `mcp-server/` is independent: it must not import from `backend/`. The backend talks to it only through the MCP protocol.
 - `backend/agent/` owns graph state, nodes and prompts; `backend/rag/` owns chunking, embedding and Pinecone access. The agent uses RAG through a service interface, not by calling Pinecone directly.
-- The frontend consumes only the DRF API (including the SSE stream) and renders citations returned by the backend; it never calls Bedrock, Pinecone or the MCP server directly.
+- The frontend consumes only the DRF API (`/api/v2/chat/`, including the SSE stream) and renders citations returned by the backend; it never calls Bedrock, Pinecone or the MCP server directly.
+
+## MVP contracts
+
+- **MCP tools** (exactly three, LLM-documented, returning structured JSON):
+  - `get_dof_today()` — current day's DOF summary.
+  - `search_dof_by_date(date_str)` — historical edition by date, format `DD-MM-YYYY`.
+  - `extract_decree_text(url)` — clean text of a specific decree or agreement.
+- **Graph nodes:** `router_node` (Historical Law RAG vs. Daily DOF MCP vs. Hybrid) → `retrieve_node` / `mcp_node` → `grade_documents_node` → `transform_query_node` (loop, max 2 retries) → `generate_node`.
+- **Ingestion:** `s3:ObjectCreated:*` on the raw-docs bucket triggers the ingestion Lambda (PDF/TXT → structural chunks → Titan v2 embeddings → Pinecone upsert).
+- **UI:** streaming chat plus a collapsible **"Fuentes Verificadas"** panel showing exact excerpts and DOF links.
 
 ## Conventions
-- Python: type hints everywhere, Pydantic / TypedDict models for agent state and tool I/O.
+- Python: PEP 8, type hints everywhere, Pydantic / TypedDict models for agent state and tool I/O. Document functions and tools in clear technical English.
 - Prompts live in `backend/agent/prompts/` as versioned files, not inline strings scattered across nodes.
-- Tests: unit tests for the chunker (article boundary detection on real law samples), graph nodes (with mocked Bedrock/Pinecone/MCP), and API endpoints. Never call real AWS or Pinecone from unit tests.
-- User-facing content (answers, UI copy) is in Spanish; code, comments and identifiers are in English.
+- Language: LLM-facing prompts, legal answers and UI copy are in accurate, formal **Mexican Spanish**; code, comments and identifiers are in English.
+- Tests (pytest) are required before a task is considered complete: the chunker (article boundary detection on real law samples), MCP tools (mocked dof.gob.mx HTTP responses), LangGraph routing transitions and nodes (mocked Bedrock/Pinecone/MCP), and API endpoints. Never call real AWS, Pinecone or dof.gob.mx from unit tests.
+
+## Architecture Decision Records
+
+- **ADR-001 — Pinecone over OpenSearch Serverless:** Pinecone Serverless free tier avoids OpenSearch Serverless baseline costs (~$350 USD/month) while preserving metadata filtering.
+- **ADR-002 — Structural over fixed-size chunking:** Mexican legal interpretation depends on complete articles and transitional provisions; regex-based hierarchical splitting prevents semantic fragmentation.
+- **ADR-003 — MCP over hardcoded scrapers:** Decoupling DOF scraping into an MCP server lets other agents or IDE clients reuse the tools without changing backend orchestration.
 
 ## Commands
 
-_To be filled in as each package is scaffolded (install, run locally, test, lint, terraform plan/apply)._
+### Backend / RAG ingestion (`backend/`)
+
+```bash
+py -3.11 -m venv .venv                                   # repo root; Lambda runtime is 3.11
+.venv/Scripts/python -m pip install -e "backend[dev]"    # Linux/macOS: .venv/bin/python
+cd backend
+python -m pytest                                         # unit tests (no network)
+ruff check . && ruff format --check . && mypy            # lint, format, strict types
+python -m rag.cli chunk path/to/LFT.pdf                  # dry-run the structural chunker
+python -m rag.cli create-index dof-ai-legislacion        # one-off Pinecone index (1024-d, cosine)
+python -m rag.cli ingest path/to/LFT.pdf --source-url <url>  # real Bedrock + Pinecone run (.env)
+```
+
+- Lambda entry point: `rag.handler.lambda_handler` (package `backend/rag` + `backend/requirements-ingestion.txt`).
+- Vector IDs are `<law_slug>#art-<label>` / `<law_slug>#tr<block>-<label>`; the slug defaults to the file stem (`LFT.pdf` → `lft`) or the `x-amz-meta-law-id` S3 metadata. Re-uploading a law replaces its vectors and prunes stale IDs.
+- Optional S3 object metadata: `law-id`, `law-name`, `source-url`, `publication-date` (`YYYY-MM-DD`).
