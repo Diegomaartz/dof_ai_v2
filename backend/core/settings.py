@@ -85,10 +85,14 @@ DOF_AGENT_FACTORY = os.getenv("DOF_AGENT_FACTORY", "agent.factory.build_default_
 """Dotted path of a zero-argument callable returning the compiled agent graph (tests swap in fakes)."""
 
 CHAT_MAX_QUESTION_CHARS = int(os.getenv("CHAT_MAX_QUESTION_CHARS", "2000"))
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("CHAT_MAX_BODY_BYTES", "16384"))
+"""Largest request body Django will read; a 2000-character question is at most ~8 KB of JSON."""
 CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "10/minute")
-"""Questions allowed per client IP; every question spends Bedrock tokens. Format: <n>/(second|minute|hour)."""
+"""Questions allowed per client IP; every question spends Bedrock tokens. Format: <n>/(second|minute|hour).
+Validated at startup by ``api.apps.ApiConfig.ready``."""
 CHAT_TRUSTED_PROXY_COUNT = int(os.getenv("CHAT_TRUSTED_PROXY_COUNT", "0"))
-"""Reverse proxies in front of Django whose X-Forwarded-For entries are trusted (0: use the socket address)."""
+"""Reverse proxies in front of Django whose X-Forwarded-For entries are trusted (0: use the socket address).
+Must be 1 behind the AWS ALB, otherwise every user shares the ALB's rate-limit bucket."""
 CHAT_KEEPALIVE_SECONDS = float(os.getenv("CHAT_KEEPALIVE_SECONDS", "15"))
 """SSE comment sent while the agent is silent, so proxies do not drop the connection."""
 

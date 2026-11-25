@@ -118,8 +118,8 @@ DJANGO_DEBUG=true python -m uvicorn core.asgi:application --port 8000  # API (AS
 - `POST /api/v2/chat/` with `{"question": "..."}`. `Accept: text/event-stream` streams SSE; otherwise one JSON document with the `final` shape. `GET /api/v2/health/` is the liveness probe (does not build the agent).
 - SSE events: `status` `{node, label}` when a graph node starts, `token` `{text}` (answer only, from `generate_node`), then exactly one `final` `{answer, refused, route, retries, sources[]}` or one `error` `{code, message}`. **`final` is authoritative**: the client replaces the streamed text with `final.answer` (a rejected draft becomes the refusal), and discards it on `error`. `: ping` comments keep the connection alive every `CHAT_KEEPALIVE_SECONDS`.
 - `sources[]` (cited sources only) carry `id, kind, citation, title, excerpt, excerpt_is_complete, url, date, hierarchy, is_repealed` for the "Fuentes Verificadas" panel.
-- Errors are JSON `{code, detail}`: 400 `invalid_json` / `invalid_request` (with `errors`), 405, 429 `rate_limited` (+ `Retry-After`), 503 `agent_unavailable`. Exception details are logged, never returned.
-- The chat view is a native async Django view (DRF has no async views); DRF serializers do validation and define the response schema. The API is stateless: no database. Rate limiting (`CHAT_RATE_LIMIT`, per client IP, LocMem cache) is per process; set `CHAT_TRUSTED_PROXY_COUNT` only when a proxy appends `X-Forwarded-For`.
+- Errors are JSON `{code, detail}`: 400 `invalid_json` / `invalid_request` (with `errors`; also bodies over `CHAT_MAX_BODY_BYTES`, default 16 KB), 405, 429 `rate_limited` (+ `Retry-After`), 503 `agent_unavailable`. Exception details are logged, never returned.
+- The chat view is a native async Django view (DRF has no async views); DRF serializers do validation and define the response schema. The API is stateless: no database. Rate limiting (`CHAT_RATE_LIMIT`, per client IP, LocMem cache) is per process; set `CHAT_TRUSTED_PROXY_COUNT` only when a proxy appends `X-Forwarded-For` (1 behind the AWS ALB). An invalid `CHAT_RATE_LIMIT` fails at startup (`api.apps.ApiConfig.ready`). The question text is never logged.
 - Tests use `core.settings_test` (fake agent via `tests.api.fakes`); `core.settings` refuses to start without `DJANGO_SECRET_KEY` unless `DJANGO_DEBUG=true`.
 
 ### Frontend (`frontend/`)
@@ -135,7 +135,7 @@ npm run build      # dist/ for S3; set VITE_API_BASE_URL to the API origin at bu
 
 - The SPA calls only `POST /api/v2/chat/` (SSE via `fetch` + `src/api/sse.ts`, since `EventSource` cannot POST). It replaces the streamed draft with `final.answer`, and discards it on `error` (`src/hooks/useChat.ts`).
 - Answers render as plain text, never HTML. Citations that match a returned source become buttons that open "Fuentes Verificadas" at that source. Source links are shown only for absolute http(s) URLs (`safeExternalUrl`).
-- The production build injects a CSP `<meta>` (`vite.config.ts`, build only, because the dev server needs an inline React Refresh script). `frame-ancestors` and other header-only directives must be set by the hosting layer (Phase 4).
+- The production build injects a CSP `<meta>` (`vite.config.ts`, build only, because the dev server needs an inline React Refresh script); `connect-src` is `'self'` plus the origin of `VITE_API_BASE_URL`. `frame-ancestors` and other header-only directives must be set by the hosting layer (Phase 4).
 - Tests use happy-dom because jsdom 30+ requires Node >= 22.22.
 
 ### MCP server (`mcp-server/`)

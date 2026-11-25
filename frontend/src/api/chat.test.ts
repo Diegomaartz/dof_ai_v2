@@ -44,6 +44,11 @@ describe("streamChat", () => {
     await expect(collect(sseFetch([frame("token", { text: "La" })]))).rejects.toMatchObject({ code: "incomplete" });
   });
 
+  it("discards a final event cut off before its terminating blank line", async () => {
+    const cut = frame("final", { answer: "x" }).trimEnd();
+    await expect(collect(sseFetch([cut]))).rejects.toMatchObject({ code: "incomplete" });
+  });
+
   it("uses the field error message of a 400", async () => {
     const fetchImpl = jsonFetch(400, {
       code: "invalid_request",

@@ -69,7 +69,8 @@ export async function streamChat(
         if (isAbort(error) || signal?.aborted) throw error;
         throw new ChatApiError("incomplete", INCOMPLETE_MESSAGE);
       }
-      const text = chunk.done ? decoder.decode() + "\n\n" : decoder.decode(chunk.value, { stream: true });
+      // An event without its terminating blank line is discarded at end of stream (WHATWG), so none is added.
+      const text = chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
       for (const raw of parser.feed(text)) {
         const event = toChatEvent(raw);
         if (!event) continue;

@@ -97,5 +97,6 @@ async def agent_events(graph: Any, question: str) -> AsyncIterator[ChatEvent]:
         elif mode == "values":
             final_state = payload
     if errors := final_state.get("errors"):
-        logger.info("Agent notes for question %r: %s", question[:120], errors)
+        # The question itself is not logged: legal queries may contain personal data.
+        logger.info("Agent notes (question of %d chars): %s", len(question), errors)
     yield ChatEvent("final", final_payload(final_state))

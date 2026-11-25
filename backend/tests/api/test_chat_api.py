@@ -180,6 +180,15 @@ async def test_question_length_is_capped() -> None:
     assert response.json()["errors"]["question"] == ["La pregunta no puede exceder 10 caracteres."]
 
 
+@override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=512)
+async def test_oversized_body_is_a_json_400_before_the_agent() -> None:
+    harness = grounded_harness()
+    response = await post(AsyncClient(), {"question": "x" * 600})
+    assert response.status_code == 400
+    assert response.json() == {"code": "invalid_request", "detail": "La solicitud excede el tamaño permitido."}
+    assert harness.fast.structured_calls == []
+
+
 async def test_only_post_is_allowed() -> None:
     response = await AsyncClient().get(URL)
     assert response.status_code == 405
@@ -228,10 +237,11 @@ def test_cors_preflight_for_the_spa_origin() -> None:
     assert "Access-Control-Allow-Origin" not in denied
 
 
-def test_production_settings_require_a_secret_key() -> None:
-    env = {k: v for k, v in os.environ.items() if k not in {"DJANGO_SECRET_KEY", "DJANGO_DEBUG"}}
-    env["DJANGO_SETTINGS_MODULE"] = "core.settings"
-    result = subprocess.run(
+def setup_django(**overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run ``django.setup()`` with ``core.settings`` in a fresh interpreter."""
+    env = {k: v for k, v in os.environ.items() if k not in {"DJANGO_SECRET_KEY", "DJANGO_DEBUG", "CHAT_RATE_LIMIT"}}
+    env.update(DJANGO_SETTINGS_MODULE="core.settings", **overrides)
+    return subprocess.run(
         [sys.executable, "-c", "import django; django.setup()"],
         cwd=Path(__file__).resolve().parents[2],
         env=env,
@@ -239,5 +249,15 @@ def test_production_settings_require_a_secret_key() -> None:
         text=True,
         check=False,
     )
+
+
+def test_production_settings_require_a_secret_key() -> None:
+    result = setup_django()
     assert result.returncode != 0
     assert "Set DJANGO_SECRET_KEY" in result.stderr
+
+
+def test_invalid_rate_limit_fails_at_startup() -> None:
+    result = setup_django(DJANGO_DEBUG="true", CHAT_RATE_LIMIT="diez por minuto")
+    assert result.returncode != 0
+    assert "CHAT_RATE_LIMIT" in result.stderr
