@@ -122,6 +122,22 @@ DJANGO_DEBUG=true python -m uvicorn core.asgi:application --port 8000  # API (AS
 - The chat view is a native async Django view (DRF has no async views); DRF serializers do validation and define the response schema. The API is stateless: no database. Rate limiting (`CHAT_RATE_LIMIT`, per client IP, LocMem cache) is per process; set `CHAT_TRUSTED_PROXY_COUNT` only when a proxy appends `X-Forwarded-For`.
 - Tests use `core.settings_test` (fake agent via `tests.api.fakes`); `core.settings` refuses to start without `DJANGO_SECRET_KEY` unless `DJANGO_DEBUG=true`.
 
+### Frontend (`frontend/`)
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173, proxies /api to the Django API (VITE_DEV_API_PROXY, default 127.0.0.1:8000)
+npm test           # Vitest + Testing Library (happy-dom), mocked fetch: no backend needed
+npm run typecheck  # tsc -b (strict)
+npm run build      # dist/ for S3; set VITE_API_BASE_URL to the API origin at build time
+```
+
+- The SPA calls only `POST /api/v2/chat/` (SSE via `fetch` + `src/api/sse.ts`, since `EventSource` cannot POST). It replaces the streamed draft with `final.answer`, and discards it on `error` (`src/hooks/useChat.ts`).
+- Answers render as plain text, never HTML. Citations that match a returned source become buttons that open "Fuentes Verificadas" at that source. Source links are shown only for absolute http(s) URLs (`safeExternalUrl`).
+- The production build injects a CSP `<meta>` (`vite.config.ts`, build only, because the dev server needs an inline React Refresh script). `frame-ancestors` and other header-only directives must be set by the hosting layer (Phase 4).
+- Tests use happy-dom because jsdom 30+ requires Node >= 22.22.
+
 ### MCP server (`mcp-server/`)
 
 ```bash
