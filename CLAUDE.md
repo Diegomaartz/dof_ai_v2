@@ -105,3 +105,20 @@ python -m rag.cli ingest path/to/LFT.pdf --source-url <url>  # real Bedrock + Pi
 - Lambda entry point: `rag.handler.lambda_handler` (package `backend/rag` + `backend/requirements-ingestion.txt`).
 - Vector IDs are `<law_slug>#art-<label>` / `<law_slug>#tr<block>-<label>`; the slug defaults to the file stem (`LFT.pdf` → `lft`) or the `x-amz-meta-law-id` S3 metadata. Re-uploading a law replaces its vectors and prunes stale IDs.
 - S3 object metadata: `source-url` is **required**; `law-name` and `publication-date` (`YYYY-MM-DD`) are required when the law header cannot be parsed; `law-id` is optional. Ingestion refuses (`IncompleteLawMetadataError`, before any Bedrock/Pinecone call) rather than index chunks that cannot be cited.
+
+### MCP server (`mcp-server/`)
+
+```bash
+cd mcp-server
+py -3.11 -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev]"   # own venv: independent package
+.venv/Scripts/python -m pytest                           # unit tests (mocked SIDOF HTTP, no network)
+.venv/Scripts/ruff check . && .venv/Scripts/ruff format --check . && .venv/Scripts/mypy
+.venv/Scripts/python -m dof_mcp --port 8001              # local server at http://127.0.0.1:8001/mcp (MCP Inspector: Streamable HTTP)
+```
+
+- mcp SDK 2.x: FastMCP is now `mcp.server.mcpserver.MCPServer`; `mcp.server.fastmcp` no longer exists.
+- Lambda entry point: `dof_mcp.handler.lambda_handler` (Mangum; package `mcp-server/dof_mcp` + `mcp-server/requirements-lambda.txt`). A fresh ASGI app is built per invocation because the SDK's session manager can only `run()` once; the `MCPServer` itself is built once per container.
+- Data source is the public SIDOF JSON API (`https://sidof.segob.gob.mx/dof/sidof/notas/{DD-MM-YYYY}` and `/notas/nota/{codigo}`), not HTML scraping. Public links use `https://dof.gob.mx` (the `www.` host serves a mismatched TLS certificate).
+- SIDOF quirks: a strict `Accept: application/json` gets **406** (send `*/*` too). `existeHtml` is always `"S"`; `existeDoc == "N"` marks scanned image/PDF-only notes with no text. `tipoNota` can be the string `"null"`, and `titulo` may be missing (never substitute a heading for it).
+- `extract_decree_text` only derives the note code from dof.gob.mx / SIDOF URLs and calls the fixed SIDOF endpoint. It never fetches the URL it is given (SSRF guard).
+- Expected monthly cost: Lambda + Function URL on demand, within the free tier. No fixed-cost resources.

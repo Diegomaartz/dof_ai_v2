@@ -1,0 +1,13 @@
+{
+  "messageCode": 200,
+  "response": "OK",
+  "tamanioExcesivo": false,
+  "Nota": {
+    "codNota": 5804497,
+    "titulo": "DECRETO por el que se reforman diversas disposiciones del Reglamento de Ejemplo.",
+    "codSeccion": "UNICA",
+    "fecha": "20-11-2026",
+    "codDiario": 330965,
+    "cadenaContenido": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n<HTML>\n<head>\n<title>DOF - Diario Oficial de la Federación</title>\n<style type='text/css'>\n.Titulo_1 { font-weight: bold; }\n.Texto { text-align: justify; }\n</style>\n</head>\n<BODY>\n<h1 style='text-align:center' class='Titulo_1'>SECRETARIA DE GOBERNACION</h1>\n<h2 class='Titulo_2'>DECRETO por el que se reforman diversas disposiciones del Reglamento de Ejemplo.</h2>\n<div class='Texto'>Al margen un sello con el Escudo Nacional, que dice: Estados Unidos Mexicanos.- Presidencia de la República.</div>\n<div class='ANOTACION'>REGLAMENTO DE EJEMPLO</div>\n<div class='Texto' style='text-align:center'>CAPÍTULO I<br>Disposiciones Generales</div>\n<div class='Texto'><b>Artículo 1o.-</b>&nbsp;El presente Reglamento es de orden   público y de observancia general.</div>\n<div class='Texto'><b>Artículo 2.-</b> Para efectos de este Reglamento se entenderá por:</div>\n<div class='Texto'>I.<span>&nbsp;</span><i>Secretaría</i>: la Secretaría de Gobernación, y</div>\n<table><tr><td>Concepto</td><td>Monto</td></tr><tr><td>Derecho</td><td>$1,000.00</td></tr></table>\n<div class='Texto' style='text-align:center'><b>TRANSITORIOS</b></div>\n<div class='Texto'><b>Primero.-</b> El presente Decreto entrará en vigor al día siguiente de su publicación en el Diario Oficial de la Federación.</div>\n<script>trackView();</script>\n</BODY>\n</HTML>"
+  }
+}
