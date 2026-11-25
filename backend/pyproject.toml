@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["rag*", "agent*"]  # core/ is added with the Django API
+include = ["rag*", "agent*", "api*", "core*"]
 
 [tool.setuptools.package-data]
 agent = ["prompts/*.md"]
@@ -22,12 +22,19 @@ dependencies = [
     "langchain-core>=1.8,<2",
     "langchain-aws>=1.10,<2",
     "mcp>=2.3,<3",
+    "django>=5.2,<6",
+    "djangorestframework>=3.16",
+    "django-cors-headers>=4.4",
+    "uvicorn>=0.30",
     "tzdata>=2024.1",  # ZoneInfo("America/Mexico_City") on Windows and slim images without system tz data
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-django>=4.9",
+    "django-stubs>=5.2",
+    "djangorestframework-stubs>=3.16",
     "ruff>=0.6",
     "mypy>=1.11",
     "boto3-stubs[bedrock-runtime,s3,ssm]",
@@ -37,6 +44,7 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers"
+DJANGO_SETTINGS_MODULE = "core.settings_test"
 
 [tool.ruff]
 line-length = 120
@@ -49,5 +57,13 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # Spanish text legitimately contains am
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["rag", "agent"]
+packages = ["rag", "agent", "api", "core"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "core.settings_test"
 ignore_missing_imports = true
