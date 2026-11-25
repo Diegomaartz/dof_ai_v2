@@ -1,0 +1,6 @@
+# Runtime dependencies of the ingestion Lambda (rag package only).
+# boto3 is provided by the Lambda Python runtime but pinned here for reproducible builds.
+boto3>=1.35
+pinecone>=7
+pydantic>=2.7
+pypdfium2>=4.30

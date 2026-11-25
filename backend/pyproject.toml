@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rag*"]  # core/ and agent/ are added as they are implemented
+
+[project]
+name = "dof-ai-backend"
+version = "0.1.0"
+description = "DOF-AI v2 backend: structural legal RAG ingestion, LangGraph agent and Django API"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.35",
+    "pinecone>=7",
+    "pydantic>=2.7",
+    "pypdfium2>=4.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "boto3-stubs[bedrock-runtime,s3,ssm]",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # Spanish text legitimately contains ambiguous-looking unicode
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["rag"]
+ignore_missing_imports = true
