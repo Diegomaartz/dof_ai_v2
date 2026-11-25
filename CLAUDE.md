@@ -54,6 +54,7 @@ dof-ai-v2/
 ├── mcp-server/             # Standalone FastMCP server with real-time dof.gob.mx tools
 ├── backend/                # Django + DRF + LangGraph agent + legal chunking pipeline
 │   ├── core/               # Django settings, ASGI/WSGI config
+│   ├── api/                # DRF app: /api/v2/chat/ (JSON + SSE), /api/v2/health/
 │   ├── agent/              # LangGraph state machine, nodes, prompts, MCP client
 │   └── rag/                # Structural legal chunker + Pinecone ingestion service
 ├── frontend/               # React SPA: legal chat + source citation viewer
@@ -62,6 +63,7 @@ dof-ai-v2/
 
 ### Boundaries
 - `mcp-server/` is independent: it must not import from `backend/`. The backend talks to it only through the MCP protocol.
+- `backend/api/` owns HTTP concerns (validation, SSE, rate limiting) and reaches the agent only through `settings.DOF_AGENT_FACTORY`; it never calls Bedrock, Pinecone or MCP itself.
 - `backend/agent/` owns graph state, nodes and prompts; `backend/rag/` owns chunking, embedding and Pinecone access. The agent uses RAG through a service interface, not by calling Pinecone directly.
 - The frontend consumes only the DRF API (`/api/v2/chat/`, including the SSE stream) and renders citations returned by the backend; it never calls Bedrock, Pinecone or the MCP server directly.
 
@@ -101,6 +103,7 @@ python -m rag.cli chunk path/to/LFT.pdf                  # dry-run the structura
 python -m rag.cli create-index dof-ai-legislacion        # one-off Pinecone index (1024-d, cosine)
 python -m rag.cli ingest path/to/LFT.pdf --source-url <url>  # real Bedrock + Pinecone run (.env)
 python -m agent.cli "¿Cuál es la duración máxima de la jornada diurna?"  # real agent run: Bedrock + Pinecone + MCP server
+DJANGO_DEBUG=true python -m uvicorn core.asgi:application --port 8000  # API (ASGI is required for SSE)
 ```
 
 - Lambda entry point: `rag.handler.lambda_handler` (package `backend/rag` + `backend/requirements-ingestion.txt`).
@@ -110,6 +113,14 @@ python -m agent.cli "¿Cuál es la duración máxima de la jornada diurna?"  # r
 - Grounding is enforced in code, not only in prompts: `generate_node` replaces with the refusal message any answer that cites a source that was not retrieved, cites nothing, or has a claim line (sentence/paragraph/list item) without its own citation (`agent.citations.check_citations`; headings, `:` intros and verbatim quotes of a source are exempt). When grading is still insufficient after the 2 rewrites it refuses without calling the LLM. Law citations come verbatim from ingestion metadata; DOF notes cite `[<título abreviado>, DOF DD/MM/YYYY]`.
 - Retrieved text is untrusted data: each source is wrapped in `<fuente>…</fuente>` (tags inside the text are neutralized) and the prompts declare its content is never instructions. Repealed articles are flagged `DEROGADO` to the grader and generator.
 - Answer tokens stream from the `generate_node` node (`graph.astream(..., stream_mode="messages")`, `metadata["langgraph_node"]`). The grounding check runs after the stream ends, so clients must replace the streamed text when the final state says `refused`.
+
+#### Chat API contract (`backend/api/`)
+- `POST /api/v2/chat/` with `{"question": "..."}`. `Accept: text/event-stream` streams SSE; otherwise one JSON document with the `final` shape. `GET /api/v2/health/` is the liveness probe (does not build the agent).
+- SSE events: `status` `{node, label}` when a graph node starts, `token` `{text}` (answer only, from `generate_node`), then exactly one `final` `{answer, refused, route, retries, sources[]}` or one `error` `{code, message}`. **`final` is authoritative**: the client replaces the streamed text with `final.answer` (a rejected draft becomes the refusal), and discards it on `error`. `: ping` comments keep the connection alive every `CHAT_KEEPALIVE_SECONDS`.
+- `sources[]` (cited sources only) carry `id, kind, citation, title, excerpt, excerpt_is_complete, url, date, hierarchy, is_repealed` for the "Fuentes Verificadas" panel.
+- Errors are JSON `{code, detail}`: 400 `invalid_json` / `invalid_request` (with `errors`), 405, 429 `rate_limited` (+ `Retry-After`), 503 `agent_unavailable`. Exception details are logged, never returned.
+- The chat view is a native async Django view (DRF has no async views); DRF serializers do validation and define the response schema. The API is stateless: no database. Rate limiting (`CHAT_RATE_LIMIT`, per client IP, LocMem cache) is per process; set `CHAT_TRUSTED_PROXY_COUNT` only when a proxy appends `X-Forwarded-For`.
+- Tests use `core.settings_test` (fake agent via `tests.api.fakes`); `core.settings` refuses to start without `DJANGO_SECRET_KEY` unless `DJANGO_DEBUG=true`.
 
 ### MCP server (`mcp-server/`)
 
