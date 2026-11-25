@@ -3,7 +3,10 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["rag*"]  # core/ and agent/ are added as they are implemented
+include = ["rag*", "agent*"]  # core/ is added with the Django API
+
+[tool.setuptools.package-data]
+agent = ["prompts/*.md"]
 
 [project]
 name = "dof-ai-backend"
@@ -15,6 +18,11 @@ dependencies = [
     "pinecone>=7",
     "pydantic>=2.7",
     "pypdfium2>=4.30",
+    "langgraph>=1.2,<2",
+    "langchain-core>=1.8,<2",
+    "langchain-aws>=1.10,<2",
+    "mcp>=2.3,<3",
+    "tzdata>=2024.1",  # ZoneInfo("America/Mexico_City") on Windows and slim images without system tz data
 ]
 
 [project.optional-dependencies]
@@ -41,5 +49,5 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # Spanish text legitimately contains am
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["rag"]
+packages = ["rag", "agent"]
 ignore_missing_imports = true

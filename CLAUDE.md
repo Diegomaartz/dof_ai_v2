@@ -100,11 +100,16 @@ ruff check . && ruff format --check . && mypy            # lint, format, strict 
 python -m rag.cli chunk path/to/LFT.pdf                  # dry-run the structural chunker
 python -m rag.cli create-index dof-ai-legislacion        # one-off Pinecone index (1024-d, cosine)
 python -m rag.cli ingest path/to/LFT.pdf --source-url <url>  # real Bedrock + Pinecone run (.env)
+python -m agent.cli "¿Cuál es la duración máxima de la jornada diurna?"  # real agent run: Bedrock + Pinecone + MCP server
 ```
 
 - Lambda entry point: `rag.handler.lambda_handler` (package `backend/rag` + `backend/requirements-ingestion.txt`).
 - Vector IDs are `<law_slug>#art-<label>` / `<law_slug>#tr<block>-<label>`; the slug defaults to the file stem (`LFT.pdf` → `lft`) or the `x-amz-meta-law-id` S3 metadata. Re-uploading a law replaces its vectors and prunes stale IDs.
 - S3 object metadata: `source-url` is **required**; `law-name` and `publication-date` (`YYYY-MM-DD`) are required when the law header cannot be parsed; `law-id` is optional. Ingestion refuses (`IncompleteLawMetadataError`, before any Bedrock/Pinecone call) rather than index chunks that cannot be cited.
+- Agent: `agent.graph.build_graph(AgentDeps)` compiles the graph; `agent.factory.build_default_agent()` wires Bedrock (`BEDROCK_CHAT_MODEL_ID` for answers, `BEDROCK_FAST_MODEL_ID` for routing/grading/rewriting), `rag.retrieval.PineconeRetriever` and `agent.mcp_client.McpDofTools` (`MCP_SERVER_URL`). Tests inject fakes through `AgentDeps` (`tests/agent/conftest.py`).
+- Grounding is enforced in code, not only in prompts: `generate_node` replaces with the refusal message any answer that cites a source that was not retrieved, cites nothing, or has a claim line (sentence/paragraph/list item) without its own citation (`agent.citations.check_citations`; headings, `:` intros and verbatim quotes of a source are exempt). When grading is still insufficient after the 2 rewrites it refuses without calling the LLM. Law citations come verbatim from ingestion metadata; DOF notes cite `[<título abreviado>, DOF DD/MM/YYYY]`.
+- Retrieved text is untrusted data: each source is wrapped in `<fuente>…</fuente>` (tags inside the text are neutralized) and the prompts declare its content is never instructions. Repealed articles are flagged `DEROGADO` to the grader and generator.
+- Answer tokens stream from the `generate_node` node (`graph.astream(..., stream_mode="messages")`, `metadata["langgraph_node"]`). The grounding check runs after the stream ends, so clients must replace the streamed text when the final state says `refused`.
 
 ### MCP server (`mcp-server/`)
 
